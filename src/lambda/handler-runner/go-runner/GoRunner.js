@@ -28,9 +28,6 @@ export default class GoRunner {
       this.writeText = v3Utils.writeText
       this.v3Utils = v3Utils
     }
-
-    // Make sure we have the mock-lambda runner
-    sync('go', ['get', 'github.com/icarus-sullivan/mock-lambda@e065469'])
   }
 
   async cleanup() {
@@ -78,28 +75,6 @@ export default class GoRunner {
   }
 
   async run(event, context) {
-    const { dir } = pathParse(this.#handlerPath)
-    const handlerCodeRoot = dir.split(sep).slice(0, -1).join(sep)
-    const handlerCode = await readFile(`${this.#handlerPath}.go`, 'utf8')
-    this.#tmpPath = resolve(handlerCodeRoot, 'tmp')
-    this.#tmpFile = resolve(this.#tmpPath, 'main.go')
-
-    const out = handlerCode.replace(
-      '"github.com/aws/aws-lambda-go/lambda"',
-      'lambda "github.com/icarus-sullivan/mock-lambda"',
-    )
-
-    try {
-      await mkdir(this.#tmpPath, { recursive: true })
-    } catch (e) {
-      // @ignore
-    }
-
-    try {
-      await writeFile(this.#tmpFile, out, 'utf8')
-    } catch (e) {
-      // @ignore
-    }
 
     // Get go env to run this locally
     if (!this.#goEnv) {
@@ -118,8 +93,7 @@ export default class GoRunner {
     }
 
     // Remove our root, since we want to invoke go relatively
-    const cwdPath = `${this.#tmpFile}`.replace(`${cwd()}${sep}`, '')
-    const { stdout, stderr } = await execa(`go`, ['run', cwdPath], {
+    const { stdout, stderr } = await execa(`./bin/dashboard`, {
       stdio: 'pipe',
       env: {
         ...this.#env,
@@ -140,14 +114,6 @@ export default class GoRunner {
       },
       encoding: 'utf-8',
     })
-
-    // Clean up after we created the temporary file
-    await this.cleanup()
-
-    if (stderr) {
-      return stderr
-    }
-
     return this._parsePayload(stdout)
   }
 }
