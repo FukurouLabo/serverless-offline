@@ -114,6 +114,8 @@ export default class GoRunner {
       },
       encoding: 'utf-8',
     })
+    console.log(stdout)
+    console.log(stderr)
     return this._parsePayload(stdout)
   }
 }
