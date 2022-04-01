@@ -5,7 +5,7 @@ import execa, { sync } from 'execa'
 
 const { writeFile, readFile, mkdir, rmdir } = fsPromises
 const { parse, stringify } = JSON
-const { cwd } = process
+const { cwd, chdir } = process
 
 const PAYLOAD_IDENTIFIER = 'offline_payload'
 
@@ -15,12 +15,14 @@ export default class GoRunner {
   #tmpPath = null
   #tmpFile = null
   #goEnv = null
+  #codeDir = null
 
   constructor(funOptions, env, v3Utils) {
-    const { handlerPath } = funOptions
+    const { handlerPath, codeDir } = funOptions
 
     this.#env = env
     this.#handlerPath = handlerPath
+    this.#codeDir = codeDir
 
     if (v3Utils) {
       this.log = v3Utils.log
@@ -75,6 +77,28 @@ export default class GoRunner {
   }
 
   async run(event, context) {
+    const { dir } = pathParse(this.#handlerPath)
+    const handlerCodeRoot = dir.split(sep).slice(0, -1).join(sep)
+    const handlerCode = await readFile(`${this.#handlerPath}.go`, 'utf8')
+    this.#tmpPath = resolve(handlerCodeRoot, 'tmp')
+    this.#tmpFile = resolve(this.#tmpPath, 'main.go')
+
+    const out = handlerCode.replace(
+      '"github.com/aws/aws-lambda-go/lambda"',
+      'lambda "github.com/icarus-sullivan/mock-lambda"',
+    )
+
+    try {
+      await mkdir(this.#tmpPath, { recursive: true })
+    } catch (e) {
+      // @ignore
+    }
+
+    try {
+      await writeFile(this.#tmpFile, out, 'utf8')
+    } catch (e) {
+      // @ignore
+    }
 
     // Get go env to run this locally
     if (!this.#goEnv) {
@@ -93,7 +117,19 @@ export default class GoRunner {
     }
 
     // Remove our root, since we want to invoke go relatively
-    const { stdout, stderr } = await execa(`./bin/dashboard`, {
+    const cwdPath = `${this.#tmpFile}`.replace(`${cwd()}${sep}`, '')
+
+    try {
+      chdir(cwdPath.substring(0, cwdPath.indexOf("main.go")));
+
+      // Make sure we have the mock-lambda runner
+      sync('go', ['get', 'github.com/icarus-sullivan/mock-lambda@e065469'])
+      sync('go', ['build'])
+    } catch (e) {
+      // @ignore
+    }
+
+    const { stdout, stderr } = await execa(`./tmp`, {
       stdio: 'pipe',
       env: {
         ...this.#env,
@@ -114,8 +150,17 @@ export default class GoRunner {
       },
       encoding: 'utf-8',
     })
-    console.log(stdout)
-    console.log(stderr)
+
+    await this.cleanup()
+
+    try {
+      // refresh go.mod
+      sync('go', ['mod', 'tidy'])
+      chdir(this.#codeDir)
+    } catch (e) {
+      // @ignore
+    }
+
     return this._parsePayload(stdout)
   }
 }
